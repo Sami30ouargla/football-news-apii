@@ -5,6 +5,7 @@ const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const puppeteer = require('puppeteer');
 
 app.use(cors());
 
@@ -25,88 +26,54 @@ app.get('/', (req, res) => {
 // ... (بقية نقاط النهاية الحالية للإخباريات تبقى كما هي) ...
 
 app.get('/matches', async (req, res) => {
+  let browser;
   try {
-    const { data } = await axios.get('https://jdwel.com/today/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://jdwel.com/',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      },
-      timeout: 10000
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
     });
+    const page = await browser.newPage();
     
-    const $ = cheerio.load(data);
-    let matches = [];
-
-    // البحث عن عناصر المباريات - نسخة معدلة بناء على الهيكل الحالي للموقع
-    $('.match_row').each((i, el) => {
-      try {
-        const matchElement = $(el);
-        
-        // استخراج البيانات مع معالجة أكثر قوة للأخطاء
-        const homeTeam = matchElement.find('.hometeam .team_name').text().trim() || 
-                        matchElement.find('.hometeam .the_team').text().trim();
-        
-        const homeTeamLogo = matchElement.find('.hometeam img.team_logo').attr('src') || 
-                           matchElement.find('.hometeam img').attr('src');
-        
-        const awayTeam = matchElement.find('.awayteam .team_name').text().trim() || 
-                        matchElement.find('.awayteam .the_team').text().trim();
-        
-        const awayTeamLogo = matchElement.find('.awayteam img.team_logo').attr('src') || 
-                           matchElement.find('.awayteam img').attr('src');
-        
-        const scoreElement = matchElement.find('.match_score');
-        const homeScore = scoreElement.find('.hometeam').text().trim() || '0';
-        const awayScore = scoreElement.find('.awayteam').text().trim() || '0';
-        
-        const matchTime = matchElement.find('.match_time').text().trim() || 
-                         matchElement.find('.the_time').text().trim();
-        
-        const fullDate = matchElement.find('.match_date').text().trim() || 
-                        matchElement.find('.the_otime').text().trim();
-        
-        const league = matchElement.find('.league_name').text().trim() || 
-                     matchElement.closest('.league_box').find('.league_header').text().trim();
-        
-        matches.push({
-          league: league || 'Unknown League',
-          homeTeam: homeTeam || 'Unknown Team',
-          homeTeamLogo: homeTeamLogo ? `https://jdwel.com${homeTeamLogo.startsWith('/') ? '' : '/'}${homeTeamLogo}` : null,
-          awayTeam: awayTeam || 'Unknown Team',
-          awayTeamLogo: awayTeamLogo ? `https://jdwel.com${awayTeamLogo.startsWith('/') ? '' : '/'}${awayTeamLogo}` : null,
-          score: `${homeScore} - ${awayScore}`,
-          homeScore,
-          awayScore,
-          matchTime,
-          fullDate,
-          status: matchElement.find('.match_status').text().trim() || 'Scheduled'
-        });
-      } catch (err) {
-        console.error(`Error processing match ${i}:`, err.message);
-      }
+    // محاكاة متصفح حقيقي
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
     });
 
-    if (matches.length === 0) {
-      console.warn('No matches found in the HTML content');
-      return res.status(404).json({ 
-        warning: 'No matches found', 
-        suggestion: 'The website structure might have changed' 
-      });
-    }
+    await page.goto('https://jdwel.com/today/', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
 
+    // انتظر حتى تظهر العناصر المطلوبة
+    await page.waitForSelector('.match_row', { timeout: 5000 });
+
+    const matches = await page.evaluate(() => {
+      const items = [];
+      document.querySelectorAll('.match_row').forEach(match => {
+        items.push({
+          league: match.querySelector('.league_name')?.innerText.trim() || '',
+          homeTeam: match.querySelector('.hometeam .team_name')?.innerText.trim() || '',
+          awayTeam: match.querySelector('.awayteam .team_name')?.innerText.trim() || '',
+          score: match.querySelector('.match_score')?.innerText.trim() || '0 - 0',
+          time: match.querySelector('.match_time')?.innerText.trim() || ''
+        });
+      });
+      return items;
+    });
+
+    await browser.close();
     res.json(matches);
   } catch (err) {
-    console.error('Full error details:', {
-      message: err.message,
-      response: err.response?.status,
-      headers: err.response?.headers,
-      data: err.response?.data
+    if (browser) await browser.close();
+    console.error('Puppeteer error:', err);
+    res.status(500).json({
+      error: 'Failed to fetch matches',
+      details: err.message,
+      solution: 'Try again later or contact support'
     });
+  }
+});
     
     res.status(500).json({ 
       error: 'Failed to fetch matches data',
