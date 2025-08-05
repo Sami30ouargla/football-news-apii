@@ -1,126 +1,134 @@
 const express = require('express');
+const axios = require('axios');
+const cheerio = require('cheerio');
 const cors = require('cors');
-const fs = require('fs-extra');
-const { Cluster } = require('puppeteer-cluster');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CACHE_FILE = './cache/news.json';
 
-// وظيفة لجلب تفاصيل المقال
-async function scrapeArticle({ page, data: link }) {
-  await page.goto(link, { waitUntil: 'networkidle2', timeout: 0 });
-  return await page.evaluate(() => {
-    const title = document.querySelector('meta[property="og:title"]')?.content ||
-                  document.querySelector('h1')?.innerText || null;
-    const image = document.querySelector('meta[property="og:image"]')?.content ||
-                  document.querySelector('img')?.src || null;
-    const video = document.querySelector('meta[property="og:video"]')?.content ||
-                  document.querySelector('video source')?.src || null;
-    const published = document.querySelector('meta[property="article:published_time"]')?.content ||
-                      document.querySelector('time')?.getAttribute('datetime') || null;
-    let content = '';
-    document.querySelectorAll('p').forEach(p => content += p.innerText + '\n');
-    return { title, image, content, video, published };
-  });
-}
-
-// وظيفة لجلب روابط ESPN
-async function scrapeEspnLinks({ page }) {
-  await page.goto('https://www.espn.com/soccer/', { waitUntil: 'networkidle2', timeout: 0 });
-  const links = await page.$$eval('section a[href*="/story/"]', els => els.map(a => a.href));
-  return links.slice(0, 5);
-}
-
-// وظيفة لجلب روابط Goal
-async function scrapeGoalLinks({ page }) {
-  await page.goto('https://www.goal.com/en/news', { waitUntil: 'networkidle2', timeout: 0 });
-  const links = await page.$$eval('a[href*="/en/news/"]', els => els.map(a => a.href));
-  return [...new Set(links)].slice(0, 5);
-}
-
-// وظيفة لجلب روابط OneFootball
-async function scrapeOneFootballLinks({ page }) {
-  await page.goto('https://onefootball.com/en/home', { waitUntil: 'networkidle2', timeout: 0 });
-  const links = await page.$$eval('a[href*="/en/news/"]', els => els.map(a => a.href));
-  return [...new Set(links)].slice(0, 5);
-}
-
-// وظيفة لجلب روابط 90mins
-async function scrape90minsLinks({ page }) {
-  await page.goto('https://www.90min.com/', { waitUntil: 'networkidle2', timeout: 0 });
-  const links = await page.$$eval('a[href*="/posts/"]', els => els.map(a => a.href));
-  return [...new Set(links)].slice(0, 5);
-}
-
-// وظيفة لتحديث الأخبار وحفظها في cache
-async function updateNewsCache() {
-  console.log('🔄 Updating news cache...');
-  const cluster = await Cluster.launch({
-    concurrency: Cluster.CONCURRENCY_CONTEXT,
-    maxConcurrency: 3,
-    puppeteerOptions: { args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-  });
-
-  const results = [];
-
-  const espnLinks = await cluster.execute({}, scrapeEspnLinks);
-  for (const link of espnLinks) {
-    const data = await cluster.execute(link, scrapeArticle);
-    results.push({ ...data, link, source: 'ESPN' });
-  }
-
-  const goalLinks = await cluster.execute({}, scrapeGoalLinks);
-  for (const link of goalLinks) {
-    const data = await cluster.execute(link, scrapeArticle);
-    results.push({ ...data, link, source: 'Goal' });
-  }
-
-  const oneLinks = await cluster.execute({}, scrapeOneFootballLinks);
-  for (const link of oneLinks) {
-    const data = await cluster.execute(link, scrapeArticle);
-    results.push({ ...data, link, source: 'OneFootball' });
-  }
-
-  const min90Links = await cluster.execute({}, scrape90minsLinks);
-  for (const link of min90Links) {
-    const data = await cluster.execute(link, scrapeArticle);
-    results.push({ ...data, link, source: '90mins' });
-  }
-
-  await cluster.idle();
-  await cluster.close();
-
-  await fs.ensureDir('./cache');
-  await fs.writeJson(CACHE_FILE, results, { spaces: 2 });
-  console.log('✅ News cache updated.');
-}
-
-app.get('/news', async (req, res) => {
-  try {
-    if (!fs.existsSync(CACHE_FILE)) {
-      await updateNewsCache();
-    }
-    const data = await fs.readJson(CACHE_FILE);
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to load news' });
-  }
-});
-
-app.get('/update', async (req, res) => {
-  try {
-    await updateNewsCache();
-    res.json({ message: 'Cache updated successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update cache' });
-  }
-});
+app.use(cors());
 
 app.get('/', (req, res) => {
   res.json({
-    message: "Football News API with multiple sources is running 🚀",
-    endpoints: ["/news", "/update"]
+    message: "Football News API is running 🚀",
+    endpoints: ["/news", "/news/espn", "/news/goal", "/news/onefootball", "/news/90mins"]
+  });
+});
+
+app.get('/news/espn', async (req, res) => {
+  try {
+    const { data } = await axios.get('https://www.espn.com/soccer/');
+    const $ = cheerio.load(data);
+    let news = [];
+
+    // استخراج العناوين والروابط
+    const articles = $('section a[href*="/story/"]');
+    for (let i = 0; i < articles.length; i++) {
+      const el = articles[i];
+      const title = $(el).text().trim();
+      const link = $(el).attr('href');
+      const fullLink = link.startsWith('http') ? link : `https://www.espn.com${link}`;
+
+      // 🆕 الدخول على صفحة الخبر لاستخراج التفاصيل
+      const articlePage = await axios.get(fullLink);
+      const $$ = cheerio.load(articlePage.data);
+
+      // الصورة
+      const image = $$('meta[property="og:image"]').attr('content') || null;
+
+      // المحتوى النصي
+      let content = '';
+      $$('p').each((j, p) => {
+        content += $$(p).text().trim() + '\n';
+      });
+
+      // الفيديو (إن وجد)
+      const video = $$('meta[property="og:video"]').attr('content') || null;
+
+      news.push({
+        title,
+        link: fullLink,
+        image,
+        content: content.trim(),
+        video
+      });
+    }
+
+    res.json(news);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch ESPN detailed news' });
+  }
+});
+
+
+app.get('/news/goal', async (req, res) => {
+  try {
+    const { data } = await axios.get('https://www.goal.com/en');
+    const $ = cheerio.load(data);
+    let news = [];
+    $('a[data-testid="card-headline"]').each((i, el) => {
+      const title = $(el).text().trim();
+      const link = $(el).attr('href');
+      if (title && link) {
+        news.push({
+          title,
+          link: link.startsWith('http') ? link : `https://www.goal.com${link}`
+        });
+      }
+    });
+    res.json(news);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch Goal.com news' });
+  }
+});
+
+app.get('/news/onefootball', async (req, res) => {
+  try {
+    const { data } = await axios.get('https://onefootball.com/en/home');
+    const $ = cheerio.load(data);
+    let news = [];
+    $('a').each((i, el) => {
+      const title = $(el).text().trim();
+      const link = $(el).attr('href');
+      if (title && link && link.includes('/news/')) {
+        news.push({
+          title,
+          link: link.startsWith('http') ? link : `https://onefootball.com${link}`
+        });
+      }
+    });
+    res.json(news);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch OneFootball news' });
+  }
+});
+
+app.get('/news/90mins', async (req, res) => {
+  try {
+    const { data } = await axios.get('https://www.90min.com/');
+    const $ = cheerio.load(data);
+    let news = [];
+    $('a').each((i, el) => {
+      const title = $(el).text().trim();
+      const link = $(el).attr('href');
+      if (title && link && link.includes('/posts/')) {
+        news.push({
+          title,
+          link: link.startsWith('http') ? link : `https://www.90min.com${link}`
+        });
+      }
+    });
+    res.json(news);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch 90mins news' });
+  }
+});
+
+app.get('/news', async (req, res) => {
+  res.json({
+    message: "Use one of the following endpoints for specific news sources:",
+    sources: ["/news/espn", "/news/goal", "/news/onefootball", "/news/90mins"]
   });
 });
 
