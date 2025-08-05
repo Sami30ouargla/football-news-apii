@@ -45,12 +45,17 @@ app.get('/news/espn', async (req, res) => {
       // الفيديو (إن وجد)
       const video = $$('meta[property="og:video"]').attr('content') || null;
 
+      // 🆕 تاريخ ووقت النشر
+      const published = $$('meta[property="article:published_time"]').attr('content') ||
+                        $$('time').attr('datetime') || null;
+
       news.push({
         title,
         link: fullLink,
         image,
         content: content.trim(),
-        video
+        video,
+        published
       });
     }
 
@@ -60,6 +65,7 @@ app.get('/news/espn', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch ESPN detailed news' });
   }
 });
+
 
 
 app.get('/news/goal', async (req, res) => {
