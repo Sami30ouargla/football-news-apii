@@ -20,21 +20,47 @@ app.get('/news/espn', async (req, res) => {
     const { data } = await axios.get('https://www.espn.com/soccer/');
     const $ = cheerio.load(data);
     let news = [];
-    $('section a').each((i, el) => {
+
+    // استخراج العناوين والروابط
+    const articles = $('section a[href*="/story/"]');
+    for (let i = 0; i < articles.length; i++) {
+      const el = articles[i];
       const title = $(el).text().trim();
       const link = $(el).attr('href');
-      if (title && link && link.includes('/story/')) {
-        news.push({
-          title,
-          link: link.startsWith('http') ? link : `https://www.espn.com${link}`
-        });
-      }
-    });
+      const fullLink = link.startsWith('http') ? link : `https://www.espn.com${link}`;
+
+      // 🆕 الدخول على صفحة الخبر لاستخراج التفاصيل
+      const articlePage = await axios.get(fullLink);
+      const $$ = cheerio.load(articlePage.data);
+
+      // الصورة
+      const image = $$('meta[property="og:image"]').attr('content') || null;
+
+      // المحتوى النصي
+      let content = '';
+      $$('p').each((j, p) => {
+        content += $$(p).text().trim() + '\n';
+      });
+
+      // الفيديو (إن وجد)
+      const video = $$('meta[property="og:video"]').attr('content') || null;
+
+      news.push({
+        title,
+        link: fullLink,
+        image,
+        content: content.trim(),
+        video
+      });
+    }
+
     res.json(news);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch ESPN news' });
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch ESPN detailed news' });
   }
 });
+
 
 app.get('/news/goal', async (req, res) => {
   try {
