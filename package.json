@@ -1,23 +1,14 @@
 {
-  "name": "football-scraper",
+  "name": "kooora-matches-api",
   "version": "1.0.0",
-  "description": "Web scraper to fetch football matches from jdwel.com and provide a JSON API.",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": [
-    "football",
-    "scraper",
-    "api",
-    "jdwel"
-  ],
-  "author": "FLUTTER",
-  "license": "MIT",
   "dependencies": {
     "axios": "^1.6.7",
     "cheerio": "^1.0.0-rc.12",
-    "cors": "^2.8.5",
     "express": "^4.18.2"
   }
 }
