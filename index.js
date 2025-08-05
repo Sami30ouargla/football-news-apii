@@ -26,22 +26,46 @@ app.get('/', (req, res) => {
 
 app.get('/matches', async (req, res) => {
   try {
-    const { data } = await axios.get('https://jdwel.com/today/');
+    const { data } = await axios.get('https://jdwel.com/today/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    
     const $ = cheerio.load(data);
     let matches = [];
 
     // البحث عن عناصر المباريات
     $('.match').each((i, el) => {
-      const homeTeam = $(el).find('.hometeam .the_team').text().trim();
-      const homeTeamLogo = $(el).find('.hometeam .team_logo').attr('src');
-      const awayTeam = $(el).find('.awayteam .the_team').text().trim();
-      const awayTeamLogo = $(el).find('.awayteam .team_logo').attr('src');
-      const homeScore = $(el).find('.match_score .hometeam').text().trim();
-      const awayScore = $(el).find('.match_score .awayteam').text().trim();
-      const matchTime = $(el).find('.the_time').text().trim();
-      const fullDate = $(el).find('.the_otime').text().trim();
-
+      const matchElement = $(el);
+      
+      // استخراج بيانات الفريق المضيف
+      const homeTeamElement = matchElement.find('.team.hometeam');
+      const homeTeam = homeTeamElement.find('.the_team').first().text().trim();
+      const homeTeamLogo = homeTeamElement.find('img.team_logo').attr('src');
+      
+      // استخراج بيانات الفريق الضيف
+      const awayTeamElement = matchElement.find('.team.awayteam');
+      const awayTeam = awayTeamElement.find('.the_team').first().text().trim();
+      const awayTeamLogo = awayTeamElement.find('img.team_logo').attr('src');
+      
+      // استخراج النتيجة
+      const scoreElement = matchElement.find('.match_score');
+      const homeScore = scoreElement.find('.hometeam').text().trim();
+      const awayScore = scoreElement.find('.awayteam').text().trim();
+      
+      // استخراج الوقت والتاريخ
+      const matchTime = matchElement.find('.the_time').text().trim();
+      const fullDate = matchElement.find('.the_otime').text().trim();
+      
+      // استخراج رابط المباراة
+      const matchLink = matchElement.find('a').attr('href');
+      
+      // استخراج اسم البطولة
+      const league = matchElement.find('.league_name').text().trim();
+      
       matches.push({
+        league,
         homeTeam,
         homeTeamLogo: homeTeamLogo ? `https://jdwel.com${homeTeamLogo}` : null,
         awayTeam,
@@ -51,14 +75,21 @@ app.get('/matches', async (req, res) => {
         awayScore,
         matchTime,
         fullDate,
-        matchLink: `https://jdwel.com${$(el).find('a').attr('href')}` || null
+        matchLink: matchLink ? `https://jdwel.com${matchLink}` : null
       });
     });
 
+    if (matches.length === 0) {
+      return res.status(404).json({ error: 'No matches found', html: data });
+    }
+
     res.json(matches);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch matches data' });
+    console.error('Error details:', err.message);
+    res.status(500).json({ 
+      error: 'Failed to fetch matches data',
+      details: err.message
+    });
   }
 });
 
