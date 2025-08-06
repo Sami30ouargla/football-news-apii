@@ -1,66 +1,63 @@
-import express from "express";
-import axios from "axios";
-import * as cheerio from "cheerio";
-
+const express = require("express");
+const axios = require("axios");
+const cheerio = require("cheerio");
 const app = express();
 
-app.get("/matches", async (req, res) => {
-  try {
-    const { data } = await axios.get("https://www.kooora.com/كرة-القدم/مباريات-اليوم", {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-      },
-    });
-
-    const $ = cheerio.load(data);
-    const matches = [];
-
-    $('script[type="application/ld+json"]').each((i, el) => {
-      try {
-        const jsonText = $(el).html().trim();
-
-        if (!jsonText) return;
-
-        const jsonData = JSON.parse(jsonText);
-
-        const events = Array.isArray(jsonData) ? jsonData : [jsonData];
-
-        events.forEach((event) => {
-          if (event["@type"] === "SportsEvent") {
-            matches.push({
-              name: event.name || "",
-              startDate: event.startDate || "",
-              location: event.location?.name || "",
-              url: event.url || "",
-              status: event.eventStatus || "",
-              homeTeam: {
-                name: event.homeTeam?.name || "",
-                logo: event.homeTeam?.logo || "",
-              },
-              awayTeam: {
-                name: event.awayTeam?.name || "",
-                logo: event.awayTeam?.logo || "",
-              },
-            });
-          }
-        });
-      } catch (err) {
-        console.error("JSON parse error:", err.message);
-      }
-    });
-
-    res.json({
-      count: matches.length,
-      matches,
-    });
-  } catch (error) {
-    console.error("Error fetching matches:", error.message);
-    res.status(500).json({ error: "Failed to fetch matches" });
-  }
-});
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+const BASE_URL = "https://www.kooora.com/كرة-القدم/مباريات-اليوم";
+
+app.get("/matches", async (req, res) => {
+    try {
+        const response = await axios.get(BASE_URL);
+        const $ = cheerio.load(response.data);
+
+        let competitions = [];
+
+        $(".match-list_match-list__0JCHF .fco-competition-section").each((i, elem) => {
+            const leagueName = $(elem).find(".fco-competition-section__header-name").text().trim();
+            const leagueCountry = $(elem).find(".fco-competition-section__header-area").text().trim();
+
+            let matches = [];
+
+            $(elem).find(".fco-match-row__container").each((j, matchElem) => {
+                const matchTime = $(matchElem).find(".fco-match-start-date time").attr("datetime") || "";
+                const matchUrl = BASE_URL + ($(matchElem).find("a.fco-match-start-date").attr("href") || "#");
+
+                const homeTeam = $(matchElem).find(".fco-match-team-and-score__team-a .fco-team-name").first().text().trim();
+                const homeLogo = $(matchElem).find(".fco-match-team-and-score__team-a img").attr("src") || "";
+
+                const awayTeam = $(matchElem).find(".fco-match-team-and-score__team-b .fco-team-name").first().text().trim();
+                const awayLogo = $(matchElem).find(".fco-match-team-and-score__team-b img").attr("src") || "";
+
+                const scoreHome = $(matchElem).find(".fco-match-score[data-side='team-a']").text().trim() || "-";
+                const scoreAway = $(matchElem).find(".fco-match-score[data-side='team-b']").text().trim() || "-";
+
+                const channel = $(matchElem).find(".fco-match-row-tv-channel__header").text().replace("شاهد مباشرة على", "").trim() || "";
+                const channelLogo = $(matchElem).find(".fco-match-row-tv-channel img").attr("src") || "";
+
+                matches.push({
+                    time: matchTime,
+                    link: matchUrl,
+                    home: { name: homeTeam, logo: homeLogo, score: scoreHome },
+                    away: { name: awayTeam, logo: awayLogo, score: scoreAway },
+                    channel: { name: channel, logo: channelLogo }
+                });
+            });
+
+            if (matches.length > 0) {
+                competitions.push({
+                    league: leagueName,
+                    country: leagueCountry,
+                    matches: matches
+                });
+            }
+        });
+
+        res.json({ count: competitions.length, competitions });
+    } catch (error) {
+        console.error("خطأ أثناء جلب البيانات:", error.message);
+        res.status(500).json({ error: "فشل في جلب المباريات" });
+    }
 });
+
+app.listen(PORT, () => console.log(`✅ الخادم يعمل على المنفذ ${PORT}`));
